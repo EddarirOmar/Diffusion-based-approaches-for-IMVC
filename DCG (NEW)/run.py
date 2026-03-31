@@ -1,5 +1,6 @@
 import argparse
 import itertools
+import json
 import os
 import random
 
@@ -34,6 +35,26 @@ def _prepare_inputs(x_list, missing_rate, device):
     return x_train_list, torch.from_numpy(mask).long().to(device)
 
 
+def _apply_lambda_config(config, lambda_config_path):
+    with open(lambda_config_path, 'r', encoding='utf-8') as f:
+        payload = json.load(f)
+
+    params = payload.get('best_params', payload)
+    if not isinstance(params, dict):
+        raise ValueError('lambda_config must be a JSON object or contain a best_params object.')
+
+    applied = {}
+    for k, v in params.items():
+        if k.startswith('lambda_') or k in ('mmi_temperature', 'mmi_internal_lambda'):
+            config['training'][k] = float(v)
+            applied[k] = float(v)
+
+    if not applied:
+        raise ValueError('No lambda_*, mmi_temperature, or mmi_internal_lambda keys found in lambda_config.')
+
+    return applied
+
+
 def main(MR=[0.3]):
     # Environments
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -45,6 +66,11 @@ def main(MR=[0.3]):
     config['dataset'] = dataset
     if args.epoch is not None:
         config['training']['epoch'] = int(args.epoch)
+    if args.lambda_config is not None:
+        applied = _apply_lambda_config(config, args.lambda_config)
+        print('Applied tuned params from', args.lambda_config)
+        for k in sorted(applied.keys()):
+            print(f'  {k}: {applied[k]}')
     print("Data set: " + config['dataset'])
     config['print_num'] = 1
     seed = config['training']['seed']
@@ -91,6 +117,7 @@ if __name__ == '__main__':
     parser.add_argument('--test_time', type=int, default=1, help='number of test times')
     parser.add_argument('--devices', type=str, default='0', help='gpu device ids')
     parser.add_argument('--epoch', type=int, default=None, help='override training epochs')
+    parser.add_argument('--lambda_config', type=str, default=None, help='path to best_lambda_params.json or JSON with lambda_* values')
     args = parser.parse_args()
     dataset = dataset[args.dataset]
     MisingRate = [0.3]
