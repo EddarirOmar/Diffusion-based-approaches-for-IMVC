@@ -133,8 +133,10 @@ class NoiseScheduler():
         return pred_prev_sample
 
     def add_noise(self, x_start, x_noise, timesteps, device):
-        s1 = self.sqrt_alphas_bar[timesteps].to(device)
-        s2 = self.sqrt_one_minus_alphas_bar[timesteps].to(device)
+        # Scheduler buffers live on CPU by default; index them on CPU first.
+        idx = timesteps.long().cpu()
+        s1 = self.sqrt_alphas_bar[idx].to(device)
+        s2 = self.sqrt_one_minus_alphas_bar[idx].to(device)
         s1 = s1.view(-1, 1)
         s2 = s2.view(-1, 1)
         out1 = s1 * x_start
