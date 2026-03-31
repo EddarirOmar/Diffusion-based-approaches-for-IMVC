@@ -1,0 +1,30 @@
+# DCG (Diffusion-based Clustering for Incomplete Multi-View data) Requirements
+# 
+# IMPORTANT: See INSTALLATION.md for PyTorch CPU/GPU setup instructions.
+# PyTorch must be installed separately to ensure correct CPU/GPU configuration.
+#
+# Quick start (CPU):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+#
+# Quick start (GPU - CUDA 11.8):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+#   pip install -r requirements.txt
+
+# Core scientific computing
+numpy>=1.21.0
+scipy>=1.7.0
+scikit-learn>=1.0.0
+
+# Deep learning framework (install manually - see INSTALLATION.md)
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Clustering & utilities
+munkres>=1.1.4
+
+# Optional: for Jupyter notebook support (for dcg_colab_t4.ipynb)
+# jupyter>=1.0.0
+# ipython>=7.0.0
+# matplotlib>=3.0.0

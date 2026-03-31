@@ -31,7 +31,15 @@ def main(MR=[0.3]):
         config['training']['missing_rate'] = missingrate
         print('--------------------Missing rate = ' + str(missingrate) + '--------------------')
         for data_seed in range(1, args.test_time + 1):
-            np.random.seed(1)
+            run_seed = seed + data_seed - 1
+            np.random.seed(run_seed)
+            random.seed(run_seed)
+            os.environ['PYTHONHASHSEED'] = str(run_seed)
+            torch.manual_seed(run_seed)
+            if use_cuda:
+                torch.cuda.manual_seed_all(run_seed)
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
             mask = get_mask(2, x1_train_raw.shape[0], config['training']['missing_rate'])
             # mask the data
             x1_train = x1_train_raw * mask[:, 0][:, np.newaxis]
@@ -40,13 +48,6 @@ def main(MR=[0.3]):
             x1_train = torch.from_numpy(x1_train).float().to(device)
             x2_train = torch.from_numpy(x2_train).float().to(device)
             mask = torch.from_numpy(mask).long().to(device)
-            np.random.seed(seed)
-            random.seed(seed)
-            os.environ['PYTHONHASHSEED'] = str(seed)
-            torch.manual_seed(seed)
-            torch.cuda.manual_seed(seed)
-            torch.backends.cudnn.deterministic = True
-            torch.backends.cudnn.benchmark = True
             # Build the model
             ICDM = icdm(config)
             optimizer = torch.optim.Adam(

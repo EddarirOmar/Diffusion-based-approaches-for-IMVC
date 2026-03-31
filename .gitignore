@@ -1,0 +1,51 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build/distribution artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Jupyter checkpoints only (keep notebooks)
+.ipynb_checkpoints/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temp runtime outputs
+*.log
+*.tmp
+*.temp
+validate_functions_output.txt
+
+# Keep project assets (datasets, notebooks, configs, scripts) tracked by default.
+
+# Local environment migration artifacts
+dcg_packages.yml
+dcg_packages_explicit.txt
+dcg_requirements_from_conda.txt
+dcg_requirements_clean.txt
+dcg_requirements_complete.txt
+venv_install_log.txt

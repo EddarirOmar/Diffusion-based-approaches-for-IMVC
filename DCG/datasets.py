@@ -8,7 +8,8 @@ def load_data(config):
     """Load data """
     data_name = config['dataset']
     data_key = data_name.lower()
-    main_dir = sys.path[0] 
+    main_dir = config.get('main_dir', os.path.dirname(os.path.abspath(__file__)))
+    main_dir = os.path.abspath(main_dir)
     
     X_list = []
     Y_list = []
