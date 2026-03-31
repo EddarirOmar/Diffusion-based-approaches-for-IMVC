@@ -323,10 +323,13 @@ def main() -> None:
 
     np.savez_compressed(completed_path, **save_payload)
 
-    expected_completed_path = Path(cfg["stage2"]["completed_latents"])
-    if expected_completed_path != completed_path:
-        expected_completed_path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(expected_completed_path, **save_payload)
+    stage2_cfg = cfg.get("stage2", {}) if isinstance(cfg, dict) else {}
+    expected_completed_latents = stage2_cfg.get("completed_latents")
+    if expected_completed_latents:
+        expected_completed_path = Path(str(expected_completed_latents))
+        if expected_completed_path != completed_path:
+            expected_completed_path.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(expected_completed_path, **save_payload)
 
     print("Saved completed test latents: " + str(completed_path))
 
