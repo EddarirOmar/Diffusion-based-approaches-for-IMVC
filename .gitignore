@@ -9,6 +9,8 @@
 # Allow DCG and DMVG trees.
 !DCG/
 !DCG/**
+!DCG (NEW)/
+!DCG (NEW)/**
 !DMVG/
 !DMVG/**
 
@@ -38,3 +40,9 @@ Thumbs.db
 *.log
 *.tmp
 *.temp
+*.md
+
+# Keep markdown files inside explicitly published trees.
+!DCG/**/*.md
+!DCG (NEW)/**/*.md
+!DMVG/**/*.md
