@@ -41,10 +41,10 @@ class TimeEmbed(nn.Module):
 
 
 class Unet(nn.Module):
-    def __init__(self, emb_size: int = 128, out_size: int = 128):
+    def __init__(self, emb_size: int = 128, time_emb: str = "sinusoidal", out_size: int = 128):
         super().__init__()
 
-        self.time_mlp = TimeEmbed(emb_size, "sinusoidal")
+        self.time_mlp = TimeEmbed(emb_size, time_emb)
         concat_size = 2*emb_size
         layers = []
         layers.append(nn.Linear(concat_size, 2000))
@@ -255,10 +255,21 @@ class AttentionLayer(nn.Module):
         )
         self.output_layer = nn.Linear(latent_dim * n_views, n_views)
 
-    def forward(self, *views, tau=10.0):
+    def forward(self, *views, tau=10.0, return_weights=False):
+        
+        assert len(views) == self.n_views, f"Expected {self.n_views} views, got {len(views)}"
+
+        for v in views:
+            assert v.shape[-1] == self.latent_dim, "Latent dim mismatch across views"
+
         h = torch.cat(views, dim=-1)
         act = self.output_layer(self.mlp(h))
-        act = torch.sigmoid(act) / tau
-        e = F.softmax(act, dim=-1)  # attention weights over views
-        fused = sum(e[:, i].unsqueeze(-1) * v for i, v in enumerate(views))
+        e = F.softmax(act / tau, dim=-1)  # attention weights over views
+        fused = torch.zeros_like(views[0])
+        for i, v in enumerate(views):
+            fused = fused + e[:, i].unsqueeze(-1) * v
+
+        if return_weights:
+            return fused, e
+
         return fused
