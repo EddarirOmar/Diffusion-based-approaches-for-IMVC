@@ -6,40 +6,47 @@ import torch.nn as nn
 
 EPS = sys.float_info.epsilon
 
-def compute_joint(view1, view2):
-    """Compute the joint probability matrix P"""
+def _as_probabilities(view, temperature=1.0):
+    """Map arbitrary latent vectors to valid per-sample categorical probabilities."""
+    if temperature <= 0:
+        raise ValueError("temperature must be > 0")
+    return F.softmax(view / temperature, dim=1)
+
+
+def compute_joint(view1, view2, EPS=sys.float_info.epsilon):
+    """Compute a valid, symmetric joint probability matrix P."""
 
     bn, k = view1.size()
     assert (view2.size(0) == bn and view2.size(1) == k)
 
-    p_i_j = view1.unsqueeze(2) * view2.unsqueeze(1)
-    p_i_j = p_i_j.sum(dim=0)
-    p_i_j = (p_i_j + p_i_j.t()) / 2.   # symmetrise
-    p_i_j = p_i_j / p_i_j.sum()        # normalise
+    p_i_j = torch.matmul(view1.t(), view2) / float(bn)
+    p_i_j = (p_i_j + p_i_j.t()) / 2.0
+    p_i_j = torch.clamp(p_i_j, min=EPS)
+    p_i_j = p_i_j / torch.clamp(p_i_j.sum(), min=EPS)
 
     return p_i_j
 
 
-def MMI(view1, view2, lamb=10.0, EPS=sys.float_info.epsilon):
-    """MMI loss"""
+def MMI(view1, view2, lamb=1.0, temperature=1.0, EPS=sys.float_info.epsilon):
+    """Bounded MMI loss computed from probability views."""
     _, k = view1.size()
-    p_i_j = compute_joint(view1, view2)
+    view1_prob = _as_probabilities(view1, temperature)
+    view2_prob = _as_probabilities(view2, temperature)
+    p_i_j = compute_joint(view1_prob, view2_prob, EPS)
     assert (p_i_j.size() == (k, k))
 
-    p_i = p_i_j.sum(dim=1).view(k, 1).expand(k, k).clone()
-    p_j = p_i_j.sum(dim=0).view(1, k).expand(k, k).clone()
+    p_i = p_i_j.sum(dim=1, keepdim=True).expand(k, k)
+    p_j = p_i_j.sum(dim=0, keepdim=True).expand(k, k)
 
-    p_i_j[(p_i_j < EPS).data] = EPS
-    p_j[(p_j < EPS).data] = EPS
-    p_i[(p_i < EPS).data] = EPS
+    p_i_j = torch.clamp(p_i_j, min=EPS)
+    p_j = torch.clamp(p_j, min=EPS)
+    p_i = torch.clamp(p_i, min=EPS)
 
-    loss = - p_i_j * (torch.log(p_i_j) \
-                      - (lamb) * torch.log(p_j) \
-                      - (lamb) * torch.log(p_i))
+    mi = p_i_j * (torch.log(p_i_j) - lamb * torch.log(p_j) - lamb * torch.log(p_i))
+    mi = mi.sum()
+    mi = mi / max(math.log(k), EPS)
 
-    loss = loss.sum()
-
-    return loss
+    return -mi
 
 
 class InstanceLoss(nn.Module):

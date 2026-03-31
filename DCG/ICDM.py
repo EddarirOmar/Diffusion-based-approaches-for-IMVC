@@ -19,7 +19,10 @@ class icdm():
                                         config['Autoencoder']['batchnorm'])
         self.df1 = Unet(config['diffusion']['emb_size'], config['diffusion']['time_type'], config['diffusion']['out_dim1'])
         self.df2 = Unet(config['diffusion']['emb_size'], config['diffusion']['time_type'], config['diffusion']['out_dim2'])
-        self.noise_scheduler = NoiseScheduler(config['noise_scheduler']['num_timesteps'])
+        self.noise_scheduler = NoiseScheduler(
+            num_timesteps=config['noise_scheduler']['num_timesteps'],
+            beta_schedule=config['noise_scheduler'].get('beta_schedule', 'linear')
+        )
         self.clusterLayer = ClusterProject(config['Autoencoder']['arch1'][-1], config['training']['n_clusters'])
         self.AttentionLayer =AttentionLayer(config['Autoencoder']['arch1'][-1])
 
@@ -34,6 +37,15 @@ class icdm():
     def train(self, config, x1_train, x2_train, Y_list, mask, optimizer, device):
 
         criterion_cluster = ClusterLoss(config['training']['n_clusters'], 0.5, device).to(device)
+        train_cfg = config['training']
+        lambda_rec = float(train_cfg.get('lambda_rec', 1.0))
+        lambda_df = float(train_cfg.get('lambda_df', 1.0))
+        lambda_ce = float(train_cfg.get('lambda_ce', 1.0))
+        lambda_mmi = float(train_cfg.get('lambda_mmi', train_cfg.get('lambda1', 1.0)))
+        lambda_cluster = float(train_cfg.get('lambda_cluster', train_cfg.get('lambda2', 1.0)))
+        lambda_hc = float(train_cfg.get('lambda_hc', lambda_cluster))
+        mmi_internal_lambda = float(train_cfg.get('mmi_internal_lambda', 1.0))
+        mmi_temperature = float(train_cfg.get('mmi_temperature', 1.0))
         flag_1 = (torch.LongTensor([1, 1]).to(device) == mask).int()
         Tmp_acc, Tmp_nmi, Tmp_ari = 0, 0, 0
         accs = []
@@ -42,13 +54,16 @@ class icdm():
         for epoch in range(config['training']['epoch'] + 1):
             X1, X2, X3, X4 = shuffle(x1_train, x2_train, flag_1[:, 0], flag_1[:, 1])
             loss_all, loss_rec1, loss_rec2, loss_mmi, loss_df, loss_cluster, loss_hc, loss_ce = 0, 0, 0, 0, 0, 0, 0, 0
+            valid_batches = 0
             for batch_x1, batch_x2, x1_index, x2_index, batch_No in next_batch(X1, X2, X3, X4, config['training']['batch_size']):
                 if len(batch_x1) == 1:
                     continue
                 index_both = x1_index + x2_index == 2  # C in indicator matrix A of complete multi-view data
                 z_1 = self.autoencoder1.encoder(batch_x1[x1_index == 1])  # [Z_C^1;Z_I^1]
                 z_2 = self.autoencoder2.encoder(batch_x2[x2_index == 1])  # [Z_C^2;Z_I^2]
-                if len(batch_x1[index_both])== 1:
+                if z_1.size(0) == 0 or z_2.size(0) == 0:
+                    continue
+                if len(batch_x1[index_both]) <= 1:
                     continue
                 z_view1_both = self.autoencoder1.encoder(batch_x1[index_both])
                 z_view2_both = self.autoencoder2.encoder(batch_x2[index_both])
@@ -57,7 +72,10 @@ class icdm():
                 rec_loss = (recon1 + recon2)
                 criterion_instance = InstanceLoss(z_view1_both.shape[0], 1.0, device).to(device)
                 h_both = self.AttentionLayer(z_view1_both, z_view2_both)
-                mmi_loss = MMI(h_both, z_view1_both) + MMI(h_both, z_view2_both)
+                mmi_loss = (
+                    MMI(h_both, z_view1_both, lamb=mmi_internal_lambda, temperature=mmi_temperature)
+                    + MMI(h_both, z_view2_both, lamb=mmi_internal_lambda, temperature=mmi_temperature)
+                )
                 y1, p1 = self.clusterLayer(z_view1_both)
                 y2, p2 = self.clusterLayer(z_view2_both)
                 cluster_loss = criterion_cluster(y1, y2)
@@ -86,25 +104,37 @@ class icdm():
                 v1_missing_latent_eval = z_view1_both
                 v2_missing_latent_eval = z_view2_both
                 timesteps = list(range(len(self.noise_scheduler)))[::-1]
-                for i, t in enumerate(timesteps):
-                    t1 = torch.from_numpy(np.repeat(t, v1_missing_latent_eval.shape[0])).long().to(device)
-                    t2 = torch.from_numpy(np.repeat(t, v2_missing_latent_eval.shape[0])).long().to(device)
-                    if t1.shape[0] > 0 and t2.shape[0] > 0:
+                for t in timesteps:
+                    t1 = torch.full((v1_missing_latent_eval.shape[0],), t, dtype=torch.long, device=device)
+                    t2 = torch.full((v2_missing_latent_eval.shape[0],), t, dtype=torch.long, device=device)
+                    if t1.shape[0] > 0:
                         with torch.no_grad():
                             v1_d1 = self.df1(v1_missing_latent_eval, t1)
+                        v1_missing_latent_eval = self.noise_scheduler.step(v1_d1, t, v1_missing_latent_eval)
+                    if t2.shape[0] > 0:
+                        with torch.no_grad():
                             v2_d2 = self.df2(v2_missing_latent_eval, t2)
-                        v2_recov = self.noise_scheduler.step(v2_d2, t2[0], v2_missing_latent_eval)
-                        v1_recov = self.noise_scheduler.step(v1_d1, t1[0], v1_missing_latent_eval)
+                        v2_missing_latent_eval = self.noise_scheduler.step(v2_d2, t, v2_missing_latent_eval)
+                v1_recov = v1_missing_latent_eval
+                v2_recov = v2_missing_latent_eval
                 if v1_recov.size(0) > 0 and v2_recov.size(0) > 0 and z_view2_both.size(
                         0) > 0 and z_view1_both.size(0) > 0:
                     ce_loss = criterion_instance(v1_recov, z_view2_both) + criterion_instance(v2_recov,
                                                                                               z_view1_both)
                 else:
                     ce_loss = torch.tensor(0.0).to(device)
-                loss =  rec_loss+ 1 * (dfloss + ce_loss) +  1 * mmi_loss +  1 * (cluster_loss + hc_loss)
+                loss = (
+                    lambda_rec * rec_loss
+                    + lambda_df * dfloss
+                    + lambda_ce * ce_loss
+                    + lambda_mmi * mmi_loss
+                    + lambda_cluster * cluster_loss
+                    + lambda_hc * hc_loss
+                )
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                valid_batches += 1
                 loss_all += loss.item()
                 loss_rec1 += recon1.item()
                 loss_rec2 += recon2.item()
@@ -114,8 +144,21 @@ class icdm():
                 loss_hc += hc_loss.item()
                 loss_ce += ce_loss.item()
             if (epoch) % config['print_num'] == 0:
-                output = "Epoch: {:.0f}/{:.0f} " \
-                         "==> loss = {:.4f} " .format(epoch, config['training']['epoch'], loss_all)
+                denom = max(1, valid_batches)
+                output = (
+                    "Epoch: {:.0f}/{:.0f} ==> loss = {:.4f} "
+                    "| rec={:.4f} df={:.4f} ce={:.4f} mmi={:.4f} clu={:.4f} hc={:.4f}"
+                ).format(
+                    epoch,
+                    config['training']['epoch'],
+                    loss_all,
+                    (loss_rec1 + loss_rec2) / denom,
+                    loss_df / denom,
+                    loss_ce / denom,
+                    loss_mmi / denom,
+                    loss_cluster / denom,
+                    loss_hc / denom,
+                )
                 print(output)
                 scores = self.evaluation(config, mask, x1_train, x2_train, Y_list, device)
                 accs.append(scores['accuracy'])
@@ -143,18 +186,22 @@ class icdm():
                 device)
             if x2_train[v1_missing].shape[0] != 0:
                 v1_missing_latent_eval = self.autoencoder2.encoder(x2_train[v1_missing])
-                v2_missing_latent_eval = self.autoencoder1.encoder(x1_train[v2_missing])
                 timesteps = list(range(len(self.noise_scheduler)))[::-1]
-                for i, t in enumerate(timesteps):
-                    t1 = torch.from_numpy(np.repeat(t, v1_missing_latent_eval.shape[0])).long().to(device)
-                    t2 = torch.from_numpy(np.repeat(t, v2_missing_latent_eval.shape[0])).long().to(device)
+                for t in timesteps:
+                    t1 = torch.full((v1_missing_latent_eval.shape[0],), t, dtype=torch.long, device=device)
                     with torch.no_grad():
                         v1_d1 = self.df1(v1_missing_latent_eval, t1)
+                    v1_missing_latent_eval = self.noise_scheduler.step(v1_d1, t, v1_missing_latent_eval)
+                latent_code_img_eval[v1_missing] = v1_missing_latent_eval
+            if x1_train[v2_missing].shape[0] != 0:
+                v2_missing_latent_eval = self.autoencoder1.encoder(x1_train[v2_missing])
+                timesteps = list(range(len(self.noise_scheduler)))[::-1]
+                for t in timesteps:
+                    t2 = torch.full((v2_missing_latent_eval.shape[0],), t, dtype=torch.long, device=device)
+                    with torch.no_grad():
                         v2_d2 = self.df2(v2_missing_latent_eval, t2)
-                    v2_recov = self.noise_scheduler.step(v2_d2, t2[0], v2_missing_latent_eval)
-                    v1_recov = self.noise_scheduler.step(v1_d1, t1[0], v1_missing_latent_eval)
-                latent_code_img_eval[v1_missing] = v1_recov
-                latent_code_txt_eval[v2_missing] = v2_recov
+                    v2_missing_latent_eval = self.noise_scheduler.step(v2_d2, t, v2_missing_latent_eval)
+                latent_code_txt_eval[v2_missing] = v2_missing_latent_eval
             latent_code_img_eval[v1_all] = v1_embed
             latent_code_txt_eval[v2_all] = v2_embed
             latent_fusion = self.AttentionLayer(latent_code_img_eval, latent_code_txt_eval)

@@ -114,10 +114,15 @@ class NoiseScheduler():
         return mu
 
     def get_variance(self, t):
-        if t == 0:
-            return 0
+        if isinstance(t, torch.Tensor):
+            t = int(t.item())
+        else:
+            t = int(t)
 
-        variance = (self.betas[t] * (1. - self.alphas_cumprod_prev[t]) / (1. - self.alphas_cumprod[t])).to(t.device)
+        if t == 0:
+            return torch.tensor(0.0, dtype=self.betas.dtype)
+
+        variance = self.betas[t] * (1. - self.alphas_cumprod_prev[t]) / (1. - self.alphas_cumprod[t])
         variance = variance.clip(1e-20)
         return variance
 
@@ -128,7 +133,7 @@ class NoiseScheduler():
         variance = 0
         if t > 0:
             noise = torch.randn_like(model_output)
-            variance = (self.get_variance(t) ** 0.5) * noise
+            variance = (self.get_variance(t).to(model_output.device) ** 0.5) * noise
         pred_prev_sample = pred_prev_sample + variance
         return pred_prev_sample
 
