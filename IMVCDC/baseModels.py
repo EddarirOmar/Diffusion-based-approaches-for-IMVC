@@ -183,8 +183,9 @@ class NoiseScheduler:
     def _extract(a: torch.Tensor, t: torch.Tensor, x_shape: torch.Size) -> torch.Tensor:
         """Extract coefficients at specified timesteps."""
         batch_size = t.shape[0]
-        out = a.gather(-1, t.cpu())
-        return out.reshape(batch_size, *([1] * (len(x_shape) - 1))).to(t.device)
+        t_index = t.to(device=a.device, dtype=torch.long)
+        out = a.gather(0, t_index)
+        return out.reshape(batch_size, *([1] * (len(x_shape) - 1))).to(a.device)
 
 
 class SinusoidalTimeEmbedding(nn.Module):
