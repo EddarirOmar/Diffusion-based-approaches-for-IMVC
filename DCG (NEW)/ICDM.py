@@ -73,6 +73,24 @@ class icdm:
         self.clusterLayer.to(device)
         self.AttentionLayer.to(device)
 
+    def checkpoint_state(self):
+        """Return a serializable model state for checkpointing."""
+        return {
+            'autoencoders': self.autoencoders.state_dict(),
+            'dfs': self.dfs.state_dict(),
+            'clusterLayer': self.clusterLayer.state_dict(),
+            'AttentionLayer': self.AttentionLayer.state_dict(),
+            'n_views': self.n_views,
+            'latent_dim': self._latent_dim,
+        }
+
+    def load_checkpoint_state(self, state):
+        """Load model state from a checkpoint payload."""
+        self.autoencoders.load_state_dict(state['autoencoders'])
+        self.dfs.load_state_dict(state['dfs'])
+        self.clusterLayer.load_state_dict(state['clusterLayer'])
+        self.AttentionLayer.load_state_dict(state['AttentionLayer'])
+
     def _reverse_diffuse(self, latent, denoiser, device):
         out = latent
         timesteps = list(range(len(self.noise_scheduler)))[::-1]

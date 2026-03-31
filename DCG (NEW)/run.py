@@ -3,6 +3,7 @@ import itertools
 import json
 import os
 import random
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -55,6 +56,34 @@ def _apply_lambda_config(config, lambda_config_path):
     return applied
 
 
+def _safe_rate_str(x):
+    return str(x).replace('.', 'p')
+
+
+def _build_checkpoint_path(root_dir, dataset_name, missing_rate, data_seed, tag):
+    fname = f"{dataset_name}_mr{_safe_rate_str(missing_rate)}_seed{data_seed}_{tag}.pt"
+    return os.path.join(root_dir, fname)
+
+
+def _save_checkpoint(path, model, optimizer, config, run_seed, data_seed, missing_rate, metrics):
+    payload = {
+        'config': config,
+        'run_seed': int(run_seed),
+        'data_seed': int(data_seed),
+        'missing_rate': float(missing_rate),
+        'metrics': {
+            'acc': float(metrics['acc']),
+            'nmi': float(metrics['nmi']),
+            'ari': float(metrics['ari']),
+            'score': float(metrics['score']),
+        },
+        'model_state': model.checkpoint_state(),
+        'optimizer_state': optimizer.state_dict(),
+    }
+    torch.save(payload, path)
+    print('Checkpoint saved:', path)
+
+
 def main(MR=[0.3]):
     # Environments
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -73,6 +102,13 @@ def main(MR=[0.3]):
             print(f'  {k}: {applied[k]}')
     print("Data set: " + config['dataset'])
     config['print_num'] = 1
+    ckpt_root = args.checkpoint_dir
+    if not os.path.isabs(ckpt_root):
+        ckpt_root = str(Path(__file__).resolve().parent / ckpt_root)
+    if not args.no_checkpoint:
+        os.makedirs(ckpt_root, exist_ok=True)
+        print('Checkpoint dir:', ckpt_root)
+
     seed = config['training']['seed']
     X_list, Y_list = load_data(config)
     n_views = len(X_list)
@@ -82,6 +118,8 @@ def main(MR=[0.3]):
     for missingrate in MR:
         config['training']['missing_rate'] = missingrate
         print('--------------------Missing rate = ' + str(missingrate) + '--------------------')
+        best_score = -1.0
+        best_ckpt_path = None
         for data_seed in range(1, args.test_time + 1):
             run_seed = seed + data_seed - 1
             np.random.seed(run_seed)
@@ -98,10 +136,41 @@ def main(MR=[0.3]):
             ICDM = icdm(config)
             optimizer = _build_optimizer(ICDM, config['training']['lr'])
             ICDM.to_device(device)
+
+            if args.resume_checkpoint and data_seed == 1:
+                if os.path.exists(args.resume_checkpoint):
+                    resume_payload = torch.load(args.resume_checkpoint, map_location=device)
+                    ICDM.load_checkpoint_state(resume_payload['model_state'])
+                    if 'optimizer_state' in resume_payload:
+                        optimizer.load_state_dict(resume_payload['optimizer_state'])
+                    print('Resumed from checkpoint:', args.resume_checkpoint)
+                else:
+                    print('Resume checkpoint not found, skipping:', args.resume_checkpoint)
+
             # Training
             acc, nmi, ari = ICDM.train(config, x_train_list, Y_list, mask, optimizer, device)
             print('-------------------The ' + str(data_seed) + ' training over Missing rate = ' + str(missingrate) + '--------------------')
             print("ACC {:.2f}, NMI {:.2f}, ARI {:.2f}".format(acc, nmi, ari))
+
+            score = float((acc + nmi + ari) / 3.0)
+            run_metrics = {
+                'acc': acc,
+                'nmi': nmi,
+                'ari': ari,
+                'score': score,
+            }
+
+            if not args.no_checkpoint:
+                last_ckpt = _build_checkpoint_path(ckpt_root, dataset, missingrate, data_seed, 'last')
+                _save_checkpoint(last_ckpt, ICDM, optimizer, config, run_seed, data_seed, missingrate, run_metrics)
+
+                if score >= best_score:
+                    best_score = score
+                    best_ckpt_path = _build_checkpoint_path(ckpt_root, dataset, missingrate, data_seed, 'best')
+                    _save_checkpoint(best_ckpt_path, ICDM, optimizer, config, run_seed, data_seed, missingrate, run_metrics)
+
+        if not args.no_checkpoint and best_ckpt_path is not None:
+            print('Best checkpoint for missing rate', missingrate, '->', best_ckpt_path)
 
 if __name__ == '__main__':
     dataset = {
@@ -118,6 +187,9 @@ if __name__ == '__main__':
     parser.add_argument('--devices', type=str, default='0', help='gpu device ids')
     parser.add_argument('--epoch', type=int, default=None, help='override training epochs')
     parser.add_argument('--lambda_config', type=str, default=None, help='path to best_lambda_params.json or JSON with lambda_* values')
+    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='directory to save checkpoints')
+    parser.add_argument('--resume_checkpoint', type=str, default=None, help='path to checkpoint for resume (applied to first run)')
+    parser.add_argument('--no_checkpoint', action='store_true', help='disable checkpoint save')
     args = parser.parse_args()
     dataset = dataset[args.dataset]
     MisingRate = [0.3]

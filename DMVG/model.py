@@ -312,26 +312,31 @@ class TimeEmbed1(nn.Module):
         return self.layer(x)
     
 class TimeEmbed(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim: int, type: str, **kwargs):
         super().__init__()
-        self.embed = SinusoidalEmbedding(dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.GELU(),
-            nn.Linear(dim, dim),
-        )
+        if type == "sinusoidal":
+            self.embed = SinusoidalEmbedding(dim, **kwargs)
+            self.mlp = nn.Sequential(
+                nn.Linear(dim, dim),
+                nn.GELU(),
+                nn.Linear(dim, dim),
+                )
+        else:
+            raise ValueError(f"Unknown positional embedding type: {type}")
 
     def forward(self, t):
         emb = self.embed(t)
         return self.mlp(emb)
 
 class UNet(nn.Module):
-    def __init__(self, in_channels, n_feat, feature_dim, sampling_config):
+    def __init__(self, in_channels, n_feat, feature_dim, sampling_config, time_type="sinusoidal"):
         super().__init__()
         self.in_channels=in_channels
         self.n_feat=n_feat
         self.feature_dim=feature_dim
         self.sampling_config=sampling_config
+        self.time_type=time_type
+
 
         self.init_conv=ResBlock1d(in_channels, n_feat, is_res=True)
 
@@ -353,7 +358,7 @@ class UNet(nn.Module):
             )
         
         # temb=[Embed(1, 2**(i+1)*n_feat) for i in range(3)]
-        temb = [TimeEmbed(2**(i+1)*n_feat) for i in range(3)]    
+        temb = [TimeEmbed(2**(i+1)*n_feat, type=self.time_type) for i in range(3)]    
 
         self.temb=nn.ModuleList(temb)
 

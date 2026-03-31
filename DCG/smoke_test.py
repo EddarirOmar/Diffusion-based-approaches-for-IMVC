@@ -15,7 +15,7 @@ def main():
     config = get_default_config("Synthetic3d")
     config["dataset"] = "Synthetic3d"
     config["training"]["epoch"] = 2
-    config["training"]["batch_size"] = 8
+    config["training"]["batch_size"] = 4
     config["noise_scheduler"]["num_timesteps"] = 10
     config["training"]["lambda_mmi"] = 0.01
     config["training"]["lambda_cluster"] = 0.1
