@@ -75,6 +75,92 @@ def eval_loss(
     return float(np.mean(vals)) if vals else 0.0
 
 
+@torch.no_grad()
+def sample_completed_target_view(
+    model: LatentConditionalDenoiser,
+    scheduler: NoiseScheduler,
+    cond: torch.Tensor,
+) -> torch.Tensor:
+    """Sample completed target-view latents with ancestral DDPM sampling."""
+    batch_size = cond.shape[0]
+    latent_dim = cond.shape[-1]
+    device = cond.device
+
+    x_t = torch.randn(batch_size, latent_dim, device=device)
+    for step in range(scheduler.num_timesteps - 1, -1, -1):
+        t = torch.full((batch_size,), step, device=device, dtype=torch.long)
+
+        eps_pred = model(x_t, t, cond)
+
+        sqrt_recip_alphas_cumprod_t = scheduler._extract(
+            scheduler.sqrt_recip_alphas_cumprod,
+            t,
+            x_t.shape,
+        )
+        sqrt_recipm1_alphas_cumprod_t = scheduler._extract(
+            scheduler.sqrt_recipm1_alphas_cumprod,
+            t,
+            x_t.shape,
+        )
+        x0_pred = sqrt_recip_alphas_cumprod_t * x_t - sqrt_recipm1_alphas_cumprod_t * eps_pred
+
+        posterior_mean_coef1_t = scheduler._extract(scheduler.posterior_mean_coef1, t, x_t.shape)
+        posterior_mean_coef2_t = scheduler._extract(scheduler.posterior_mean_coef2, t, x_t.shape)
+        model_mean = posterior_mean_coef1_t * x0_pred + posterior_mean_coef2_t * x_t
+
+        if step > 0:
+            posterior_variance_t = scheduler._extract(scheduler.posterior_variance, t, x_t.shape)
+            noise = torch.randn_like(x_t)
+            x_t = model_mean + torch.sqrt(torch.clamp(posterior_variance_t, min=1e-20)) * noise
+        else:
+            x_t = model_mean
+
+    return x_t
+
+
+@torch.no_grad()
+def export_completed_test_latents(
+    model: LatentConditionalDenoiser,
+    scheduler: NoiseScheduler,
+    z_test_np: np.ndarray,
+    m_test_np: np.ndarray,
+    target_view: int,
+    device: torch.device,
+    batch_size: int,
+) -> np.ndarray:
+    """Export Stage 2 completed test latents by filling missing target-view latents."""
+    model.eval()
+
+    z_test = torch.from_numpy(z_test_np).float()
+    m_test = torch.from_numpy(m_test_np).float()
+
+    loader = DataLoader(
+        TensorDataset(z_test, m_test),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+    )
+
+    completed_batches = []
+    for z_batch, m_batch in loader:
+        z_batch = z_batch.to(device)
+        m_batch = m_batch.to(device)
+
+        _, cond = split_target_cond(z_batch, target_view)
+        x_completed = sample_completed_target_view(model, scheduler, cond)
+
+        z_completed = z_batch.clone()
+        missing_target = (m_batch[:, target_view] < 0.5).unsqueeze(-1)
+        z_completed[:, target_view, :] = torch.where(
+            missing_target,
+            x_completed,
+            z_batch[:, target_view, :],
+        )
+        completed_batches.append(z_completed.cpu().numpy())
+
+    return np.concatenate(completed_batches, axis=0)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Stage 2: Latent diffusion for missing view completion")
     parser.add_argument("--data_name", required=True, help="Dataset name (e.g., NoisyMNIST, CUB)")
@@ -104,7 +190,7 @@ def main() -> None:
 
     print("Loading Stage 1 latents...")
     z_train_np, m_train_np, _ = load_latent_npz(cfg["stage1"]["train_latents"])
-    z_test_np, m_test_np, _ = load_latent_npz(cfg["stage1"]["test_latents"])
+    z_test_np, m_test_np, y_test_np = load_latent_npz(cfg["stage1"]["test_latents"])
 
     z_train_np, m_train_np = select_stage2_training_samples(z_train_np, m_train_np)
 
@@ -215,6 +301,34 @@ def main() -> None:
 
     with open(logs_dir / "stage2_dm_metrics.json", "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
+
+    print("Generating completed test latents...")
+    z_test_completed = export_completed_test_latents(
+        model=model,
+        scheduler=scheduler,
+        z_test_np=z_test_np,
+        m_test_np=m_test_np,
+        target_view=target_view,
+        device=device,
+        batch_size=int(cfg["training"]["batch_size"]),
+    )
+
+    completed_path = latent_dir / "test_latents_completed.npz"
+    save_payload = {
+        "latents_completed": z_test_completed,
+        "view_mask": m_test_np,
+    }
+    if y_test_np is not None:
+        save_payload["labels"] = y_test_np
+
+    np.savez_compressed(completed_path, **save_payload)
+
+    expected_completed_path = Path(cfg["stage2"]["completed_latents"])
+    if expected_completed_path != completed_path:
+        expected_completed_path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(expected_completed_path, **save_payload)
+
+    print("Saved completed test latents: " + str(completed_path))
 
     print("-------------------The training over data set = " + str(args.data_name) + "--------------------")
     print("[DONE] Stage 2 complete.")
