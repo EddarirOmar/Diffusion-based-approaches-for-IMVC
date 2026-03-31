@@ -1,4 +1,5 @@
 import argparse
+import csv
 import itertools
 import json
 import os
@@ -65,6 +66,11 @@ def _build_checkpoint_path(root_dir, dataset_name, missing_rate, data_seed, tag)
     return os.path.join(root_dir, fname)
 
 
+def _build_metrics_path(root_dir, dataset_name, missing_rate, data_seed, ext):
+    fname = f"{dataset_name}_mr{_safe_rate_str(missing_rate)}_seed{data_seed}_metrics.{ext}"
+    return os.path.join(root_dir, fname)
+
+
 def _save_checkpoint(path, model, optimizer, config, run_seed, data_seed, missing_rate, metrics):
     payload = {
         'config': config,
@@ -82,6 +88,36 @@ def _save_checkpoint(path, model, optimizer, config, run_seed, data_seed, missin
     }
     torch.save(payload, path)
     print('Checkpoint saved:', path)
+
+
+def _save_metrics_history_json(path, history_payload):
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(history_payload, f, indent=2)
+    print('Metrics JSON saved:', path)
+
+
+def _save_metrics_history_csv(path, history_rows):
+    if not history_rows:
+        return
+    fieldnames = [
+        'epoch',
+        'loss',
+        'rec_loss',
+        'df_loss',
+        'ce_loss',
+        'mmi_loss',
+        'cluster_loss',
+        'hc_loss',
+        'accuracy',
+        'NMI',
+        'ARI',
+    ]
+    with open(path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in history_rows:
+            writer.writerow({k: row.get(k) for k in fieldnames})
+    print('Metrics CSV saved:', path)
 
 
 def main(MR=[0.3]):
@@ -148,9 +184,36 @@ def main(MR=[0.3]):
                     print('Resume checkpoint not found, skipping:', args.resume_checkpoint)
 
             # Training
-            acc, nmi, ari = ICDM.train(config, x_train_list, Y_list, mask, optimizer, device)
+            acc, nmi, ari, history = ICDM.train(
+                config,
+                x_train_list,
+                Y_list,
+                mask,
+                optimizer,
+                device,
+                return_history=True,
+            )
             print('-------------------The ' + str(data_seed) + ' training over Missing rate = ' + str(missingrate) + '--------------------')
             print("ACC {:.2f}, NMI {:.2f}, ARI {:.2f}".format(acc, nmi, ari))
+
+            if not args.no_metrics:
+                metrics_json_path = _build_metrics_path(ckpt_root, dataset, missingrate, data_seed, 'json')
+                metrics_csv_path = _build_metrics_path(ckpt_root, dataset, missingrate, data_seed, 'csv')
+                history_payload = {
+                    'dataset': dataset,
+                    'missing_rate': float(missingrate),
+                    'run_seed': int(run_seed),
+                    'data_seed': int(data_seed),
+                    'summary': {
+                        'acc': float(acc),
+                        'nmi': float(nmi),
+                        'ari': float(ari),
+                        'score': float((acc + nmi + ari) / 3.0),
+                    },
+                    'history': history,
+                }
+                _save_metrics_history_json(metrics_json_path, history_payload)
+                _save_metrics_history_csv(metrics_csv_path, history)
 
             score = float((acc + nmi + ari) / 3.0)
             run_metrics = {
@@ -190,6 +253,7 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='directory to save checkpoints')
     parser.add_argument('--resume_checkpoint', type=str, default=None, help='path to checkpoint for resume (applied to first run)')
     parser.add_argument('--no_checkpoint', action='store_true', help='disable checkpoint save')
+    parser.add_argument('--no_metrics', action='store_true', help='disable per-epoch metrics save')
     args = parser.parse_args()
     dataset = dataset[args.dataset]
     MisingRate = [0.3]

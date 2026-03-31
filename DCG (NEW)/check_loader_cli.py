@@ -1,7 +1,8 @@
 import importlib.util
 from pathlib import Path
 
-repo = Path(r"c:\Users\eddar\Desktop\Master Search -IMVC\Diffusion-based approaches")
+# Resolve repo root relative to this file: DCG (NEW)/check_loader_cli.py -> ../
+repo = Path(__file__).resolve().parent.parent
 file_path = repo / "DCG (NEW)" / "datasets.py"
 
 spec = importlib.util.spec_from_file_location("dcg_new_datasets", str(file_path))

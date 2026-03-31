@@ -106,7 +106,7 @@ class icdm:
             return torch.tensor(0.0)
         return sum(values) / len(values)
 
-    def train(self, config, x_train_list, Y_list, mask, optimizer, device):
+    def train(self, config, x_train_list, Y_list, mask, optimizer, device, return_history=False):
         criterion_cluster = ClusterLoss(config['training']['n_clusters'], 0.5, device).to(device)
         train_cfg = config['training']
         lambda_rec = float(train_cfg.get('lambda_rec', 1.0))
@@ -119,6 +119,7 @@ class icdm:
         mmi_temperature = float(train_cfg.get('mmi_temperature', 1.0))
 
         best_acc, best_nmi, best_ari = 0, 0, 0
+        history = []
         n_samples = x_train_list[0].shape[0]
 
         for epoch in range(config['training']['epoch'] + 1):
@@ -223,28 +224,52 @@ class icdm:
 
             if (epoch) % config['print_num'] == 0:
                 denom = max(1, valid_batches)
+                epoch_loss = float(loss_all / denom)
+                epoch_rec = float(loss_rec / denom)
+                epoch_df = float(loss_df / denom)
+                epoch_ce = float(loss_ce / denom)
+                epoch_mmi = float(loss_mmi / denom)
+                epoch_clu = float(loss_cluster / denom)
+                epoch_hc = float(loss_hc / denom)
                 output = (
                     'Epoch: {:.0f}/{:.0f} ==> loss = {:.4f} '
                     '| rec={:.4f} df={:.4f} ce={:.4f} mmi={:.4f} clu={:.4f} hc={:.4f}'
                 ).format(
                     epoch,
                     config['training']['epoch'],
-                    loss_all,
-                    loss_rec / denom,
-                    loss_df / denom,
-                    loss_ce / denom,
-                    loss_mmi / denom,
-                    loss_cluster / denom,
-                    loss_hc / denom,
+                    epoch_loss,
+                    epoch_rec,
+                    epoch_df,
+                    epoch_ce,
+                    epoch_mmi,
+                    epoch_clu,
+                    epoch_hc,
                 )
                 print(output)
 
                 scores = self.evaluation(config, mask, x_train_list, Y_list, device)
+                history.append(
+                    {
+                        'epoch': int(epoch),
+                        'loss': epoch_loss,
+                        'rec_loss': epoch_rec,
+                        'df_loss': epoch_df,
+                        'ce_loss': epoch_ce,
+                        'mmi_loss': epoch_mmi,
+                        'cluster_loss': epoch_clu,
+                        'hc_loss': epoch_hc,
+                        'accuracy': float(scores.get('accuracy', 0.0)),
+                        'NMI': float(scores.get('NMI', 0.0)),
+                        'ARI': float(scores.get('ARI', 0.0)),
+                    }
+                )
                 if scores['accuracy'] >= best_acc:
                     best_acc = scores['accuracy']
                     best_nmi = scores['NMI']
                     best_ari = scores['ARI']
 
+        if return_history:
+            return best_acc, best_nmi, best_ari, history
         return best_acc, best_nmi, best_ari
 
     def evaluation(self, config, mask, x_train_list, Y_list, device):
