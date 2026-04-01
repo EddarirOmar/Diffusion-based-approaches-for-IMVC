@@ -7,10 +7,6 @@
 !.gitignore
 !.gitattributes
 
-# Publish shared datasets folder.
-!datasets/
-!datasets/**
-
 # Allow DCG and DMVG trees.
 !DCG/
 !DCG/**
