@@ -43,7 +43,7 @@ def load_data(config):
     Y_list = []
     print("shuffle")
     if data_key == 'cub':
-        mat = sio.loadmat(_resolve_data_file(main_dir, 'cub_googlenet_doc2vec_c10.mat', dataset_root))
+        mat = sio.loadmat(_resolve_data_file(main_dir, 'CUB.mat', dataset_root))
         X_list.append(mat['X'][0][0].astype('float32'))
         X_list.append(mat['X'][0][1].astype('float32'))
         Y_list.append(np.squeeze(mat['gt']))

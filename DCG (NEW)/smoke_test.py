@@ -8,44 +8,16 @@ import torch
 
 from configure import get_default_config
 from datasets import load_data
-from get_indicator_matrix_A import get_mask
 from ICDM import icdm
-
-
-def _build_optimizer(model, lr):
-    ae_params = itertools.chain.from_iterable(ae.parameters() for ae in model.autoencoders)
-    df_params = itertools.chain.from_iterable(df.parameters() for df in model.dfs)
-    return torch.optim.Adam(
-        itertools.chain(
-            ae_params,
-            df_params,
-            model.clusterLayer.parameters(),
-            model.AttentionLayer.parameters(),
-        ),
-        lr=lr,
-    )
-
-
-def _prepare_inputs(x_list, missing_rate, device):
-    n_views = len(x_list)
-    n_samples = x_list[0].shape[0]
-    mask = get_mask(n_views, n_samples, missing_rate)
-
-    x_train_list = []
-    for v in range(n_views):
-        x_masked = x_list[v] * mask[:, v][:, np.newaxis]
-        x_train_list.append(torch.from_numpy(x_masked).float().to(device))
-
-    mask = torch.from_numpy(mask).long().to(device)
-    return x_train_list, mask
+from utils import build_optimizer, prepare_inputs
 
 
 def _run_smoke(config, x_list, y_list, device):
-    x_train_list, mask = _prepare_inputs(x_list, config["training"]["missing_rate"], device)
+    x_train_list, mask = prepare_inputs(x_list, config["training"]["missing_rate"], device)
 
     model = icdm(config)
     model.to_device(device)
-    optimizer = _build_optimizer(model, config["training"]["lr"])
+    optimizer = build_optimizer(model, config["training"]["lr"])
 
     acc, nmi, ari = model.train(config, x_train_list, y_list, mask, optimizer, device)
     print("SMOKE_RESULT", f"ACC={acc:.4f}", f"NMI={nmi:.4f}", f"ARI={ari:.4f}")
