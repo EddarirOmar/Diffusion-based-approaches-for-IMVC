@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from baseModels import Autoencoder, AttentionLayer, ClusterProject, NoiseScheduler, Unet
 from evaluation import evaluation
 from loss import ClusterLoss, EPS, InstanceLoss, MMI
-from util import target_l2
+from utils import target_l2
 
 
 class icdm:
