@@ -18,6 +18,8 @@
 !DCG (NEW)/**
 !DMVG/
 !DMVG/**
+!IMVCDC/
+!IMVCDC/**
 
 # Ignore common generated files even inside allowed trees.
 __pycache__/
@@ -48,6 +50,7 @@ Thumbs.db
 *.md
 
 # Keep markdown files inside explicitly published trees.
-!DCG/**/*.md
-!DCG (NEW)/**/*.md
-!DMVG/**/*.md
+# !DCG/**/*.md
+# !DCG (NEW)/**/*.md
+# !DMVG/**/*.md
+# !IMVCDC/**/*.md
