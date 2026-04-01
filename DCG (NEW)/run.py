@@ -10,9 +10,20 @@ import numpy as np
 import torch
 
 from get_indicator_matrix_A import get_mask
-from datasets import *
+from datasets import load_data
 from configure import get_default_config
 from ICDM import *
+
+
+def _parse_missing_rates(raw_value):
+    parts = [p.strip() for p in str(raw_value).split(',') if p.strip()]
+    if not parts:
+        raise ValueError('missing_rate must contain at least one float value.')
+    rates = [float(p) for p in parts]
+    for r in rates:
+        if r < 0.0 or r >= 1.0:
+            raise ValueError(f'Invalid missing rate: {r}. Expected 0 <= rate < 1.')
+    return rates
 
 
 def _build_optimizer(model, lr):
@@ -254,8 +265,9 @@ if __name__ == '__main__':
     parser.add_argument('--resume_checkpoint', type=str, default=None, help='path to checkpoint for resume (applied to first run)')
     parser.add_argument('--no_checkpoint', action='store_true', help='disable checkpoint save')
     parser.add_argument('--no_metrics', action='store_true', help='disable per-epoch metrics save')
+    parser.add_argument('--missing_rate', type=str, default='0.3', help='missing rate(s), e.g. 0.1 or 0.1,0.3')
     args = parser.parse_args()
     dataset = dataset[args.dataset]
-    MisingRate = [0.3]
+    MisingRate = _parse_missing_rates(args.missing_rate)
 
     main(MR=MisingRate)
